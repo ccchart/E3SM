@@ -748,6 +748,8 @@ subroutine phys_init( phys_state, phys_tend, pbuf2d, cam_out )
     use convect_shallow,    only: convect_shallow_init
     use cam_diagnostics,    only: diag_init
     use gw_drag,            only: gw_init
+    ! CCC insert turbines module here
+    use wt_drag,            only: wt_init
     use cam3_aero_data,     only: cam3_aero_data_on, cam3_aero_data_init
     use cam3_ozone_data,    only: cam3_ozone_data_on, cam3_ozone_data_init
     use radheat,            only: radheat_init
@@ -910,6 +912,9 @@ subroutine phys_init( phys_state, phys_tend, pbuf2d, cam_out )
     if (cam3_ozone_data_on) call cam3_ozone_data_init(phys_state)
 
     call gw_init(pbuf2d)
+
+    ! CCC insert turbines init here
+    call wt_init()
 
     call rayleigh_friction_init()
 
@@ -1567,6 +1572,8 @@ subroutine tphysac (ztodt,   cam_in,  &
     use chemistry,          only: chem_is_active, chem_timestep_tend, chem_emissions
     use cam_diagnostics,    only: diag_phys_tend_writeout
     use gw_drag,            only: gw_tend
+!! moved below to tphysbc
+!!    use wt_drag,            only: wt_tend, l_wt_drag
     use vertical_diffusion, only: vertical_diffusion_tend
     use rayleigh_friction,  only: rayleigh_friction_tend
     use physics_types,      only: physics_state, physics_tend, physics_ptend,    &
@@ -1920,6 +1927,17 @@ end if ! l_tracer_aero
 
     call cnd_diag_checkpoint( diag, 'AERDRYRM', state, pbuf, cam_in, cam_out )
 
+!! moved below to tphysbc
+!!if (l_wt_drag) then
+!!    call t_startf('wt_tend')
+!!    call wt_tend(state, sgh, pbuf, ztodt, ptend, cam_in)
+!!    call physics_update(state, ptend, ztodt, tend)
+!!    !! energy is not conserved here, don't bother checking
+!!    !call check_energy_chng(state, tend, "wtdrag", nstep, ztodt, zero, zero, zero, zero)
+!!    call t_stopf('wt_tend')
+!!    call cnd_diag_checkpoint( diag, 'WTDRAG', state, pbuf, cam_in, cam_out )
+!!endif
+
 if (l_gw_drag) then
     !===================================================
     ! Gravity wave drag
@@ -2227,6 +2245,7 @@ subroutine tphysbc (ztodt,               &
     use debug_info,      only: get_debug_chunk, get_debug_macmiciter
     use lnd_infodata,    only: precip_downscaling_method
     use cflx,            only: cflx_tend
+    use wt_drag,            only: wt_tend, l_wt_drag
 
     implicit none
 
@@ -2841,6 +2860,26 @@ end if
             cam_in%lhf , cam_in%cflx/cld_macmic_num_steps )
 
     end if
+          !!
+          !! Wind turbine tendencies here
+          !!
+          if (l_wt_drag) then
+              call t_startf('wt_tend')
+              !! ztodt is only used in calculating dTKE, which is not scaled with ptend
+              call wt_tend(state, sgh, pbuf, ztodt/cld_macmic_num_steps, ptend, cam_in)
+                ! Unfortunately, physics_update does not know what time period
+                ! "tend" is supposed to cover, and therefore can't update it
+                ! with substeps correctly. For now, work around this by scaling
+                ! ptend down by the number of substeps, then applying it for
+                ! the full time (ztodt).
+              call physics_ptend_scale(ptend, 1._r8/cld_macmic_num_steps, ncol)
+              call physics_update(state, ptend, ztodt, tend)
+              !! energy is not conserved here, don't bother checking
+              !call check_energy_chng(state, tend, "wtdrag", nstep, ztodt, zero, zero, zero, zero)
+              call t_stopf('wt_tend')
+              call cnd_diag_checkpoint( diag, 'WTDRAG', state, pbuf, cam_in, cam_out )
+          endif
+
 !!== KZ_WATCON 
 
              ! =====================================================
