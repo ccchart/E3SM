@@ -21,7 +21,7 @@ module wt_drag
   use cam_logfile,   only: iulog
   use cam_abortutils,only: endrun
 
-  use physconst,     only: pi, rearth
+  use physconst,     only: pi, rearth, rair
 
 ! Typical module header
   implicit none
@@ -620,6 +620,10 @@ subroutine wt_tend(state, sgh, pbuf, dt, ptend, cam_in)
   real(r8) :: v(state%ncol,pver)
   real(r8) :: zm(state%ncol,pver)
   real(r8) :: zi(state%ncol,pver+1)
+  real(r8) :: t(state%ncol,pver)
+  real(r8) :: pmid(state%ncol,pver)
+
+  real(r8) :: rho(state%ncol,pver)
 
   real(r8) :: dTKEdt(state%ncol,pver)
 
@@ -659,6 +663,11 @@ subroutine wt_tend(state, sgh, pbuf, dt, ptend, cam_in)
   v = state1%v(:ncol,:)
   zm = state1%zm(:ncol,:)
   zi = state1%zi(:ncol,:)
+  pmid = state1%pmid(:ncol,:)
+  t = state1%t(:ncol,:)
+
+  ! compute air density
+  rho(:ncol,:) = pmid(:ncol,:) / (rair * t(:ncol,:))
 
   !! grab tke
   tke_idx  = pbuf_get_index('tke')
@@ -760,22 +769,24 @@ subroutine wt_tend(state, sgh, pbuf, dt, ptend, cam_in)
                endif
 
                !! force, source, and power production of one turbine at level k
+               !! fxtmp, fytmp and dtkedt are used for the tendencies (du/dt) which do not include density
                fxtmp  =  -1.0/2.0*Cd(icol,itype)  *UUA(icol,itype,k)   !! X-force of a single turbine in leyer k
                fytmp  =  -1.0/2.0*Cd(icol,itype)  *UVA(icol,itype,k)
                tketmp =   1.0/2.0*Ctke(icol,itype)*U3A(icol,itype,k)   !! turbulent source from a single turbine in layer k
                powtmp =   1.0/2.0*Cp(icol,itype)  *U3A(icol,itype,k)   !! power production from a single turbine in layer k
 
                !! forces and power are summed over level to get toal per turbine
-               forcex(icol,itype)  = forcex(icol,itype)  + fxtmp       !! x-force of a single turbine, summed over all layers
-               forcey(icol,itype)  = forcey(icol,itype)  + fytmp
-               tkesrc(icol,itype)  = tkesrc(icol,itype)  + tketmp      !! tke source of a single turbine, summed over all layers
-               wtpower(icol,itype) = wtpower(icol,itype) + powtmp      !! power of a single turbine, summed over all layers
+               !! calculated forces, tke source, and power all need density
+               forcex(icol,itype)  = forcex(icol,itype)  + rho(icol,k)*fxtmp       !! x-force of a single turbine, summed over all layers
+               forcey(icol,itype)  = forcey(icol,itype)  + rho(icol,k)*fytmp
+               tkesrc(icol,itype)  = tkesrc(icol,itype)  + rho(icol,k)*tketmp      !! tke source of a single turbine, summed over all layers
+               wtpower(icol,itype) = wtpower(icol,itype) + rho(icol,k)*powtmp      !! power of a single turbine, summed over all layers
 
                !! update tendency
                !! tendencies are summed over types to get total contribution to cell
-               ptend%u(icol,k) = ptend%u(icol,k) +fxtmp*wtnper(icol,itype)*volinv
-               ptend%v(icol,k) = ptend%v(icol,k) +fytmp*wtnper(icol,itype)*volinv
-               dTKEdt(icol,k)  = dTKEdt(icol,k)  +tketmp*wtnper(icol,itype)*volinv
+               ptend%u(icol,k) = ptend%u(icol,k) + wtnper(icol,itype)*volinv*fxtmp
+               ptend%v(icol,k) = ptend%v(icol,k) + wtnper(icol,itype)*volinv*fytmp
+               dTKEdt(icol,k)  = dTKEdt(icol,k)  + wtnper(icol,itype)*volinv*tketmp
           end do
           !! turbine power is scaled by number/column to get total production
           wtpowtot(icol,itype)  = wtpower(icol,itype)*wtnper(icol,itype)  !! total power from all turbines in this column of this type
